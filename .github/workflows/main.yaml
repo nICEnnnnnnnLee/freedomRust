@@ -17,18 +17,20 @@ jobs:
       - name: Git checkout
         uses: actions/checkout@v3
 
+      - name: Install and configure dependencies
+        run: |
+          rustup default stable
+          cargo install cross --git https://github.com/cross-rs/cross
+
       - name: Build artifacts
         run: |
-          rustup update stable && rustup default stable
-          rustup target add aarch64-unknown-linux-gnu
-          rustup target add x86_64-pc-windows-gnu
-          cargo build --release --target=aarch64-unknown-linux-gnu
-          cargo build --release --target=x86_64-pc-windows-gnu
+          cross build --release --target=x86_64-unknown-linux-gnu
+          cross build --release --target=x86_64-pc-windows-gnu
           ls -l target
-          ls -l target\x86_64-pc-windows-gnu\release
-          ls -l target\aarch64-unknown-linux-gnu\release
-          zip -m -j target\x86_64-pc-windows-gnu\release\freedom-rust.exe
-          gzip target\aarch64-unknown-linux-gnu\release\freedom-rust
+          ls -l target/x86_64-pc-windows-gnu/release
+          ls -l target/x86_64-unknown-linux-gnu/release
+          zip -j target/freedom-rust_x86_64_win.zip target/x86_64-pc-windows-gnu/release/freedom-rust.exe
+          gzip -c target/x86_64-unknown-linux-gnu/release/freedom-rust > target/freedom-rust_x86_64_linux.gz
 
       - name: Read version
         id: version
@@ -49,9 +51,9 @@ jobs:
           set -xe
           shopt -s nullglob
           TAGNAME="v${{steps.version.outputs.value}}"
-          NAME="FreedomRust $RELDATE"
+          NAME="FreedomRust $TAGNAME"
           hub release create -m "$NAME" -t "master" "$TAGNAME" \
-            -a "target\aarch64-unknown-linux-gnu\release\freedom-rust.gz" \
-            -a "target\x86_64-pc-windows-gnu\release\freedom-rust.zip"
+            -a "target/freedom-rust_x86_64_linux.gz" \
+            -a "target/freedom-rust_x86_64_win.zip"
         env:
           GITHUB_TOKEN: ${{ github.token }}
