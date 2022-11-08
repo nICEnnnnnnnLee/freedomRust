@@ -1,0 +1,9 @@
+bind_host: 127.0.0.1
+bind_port: 443 
+salt: "salt"
+use_ssl: true
+sni: baidu.com
+cert_path: certdir/fullchain.pem
+key_path: certdir/baidu.com.key
+users:
+  username: pwd

@@ -1,0 +1,59 @@
+name: Build Release
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "Cargo.toml"
+
+  workflow_dispatch:
+    inputs:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Git checkout
+        uses: actions/checkout@v3
+
+      - name: Install and configure dependencies
+        run: |
+          rustup default stable
+          cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build artifacts
+        run: |
+          cross build --release --target=x86_64-unknown-linux-gnu
+          cross build --release --target=x86_64-pc-windows-gnu
+          ls -l target
+          ls -l target/x86_64-pc-windows-gnu/release
+          ls -l target/x86_64-unknown-linux-gnu/release
+          zip -j target/freedom-rust_x86_64_win.zip target/x86_64-pc-windows-gnu/release/freedom-rust.exe
+          gzip -c target/x86_64-unknown-linux-gnu/release/freedom-rust > target/freedom-rust_x86_64_linux.gz
+
+      - name: Read version
+        id: version
+        shell: python
+        run: |
+          import re
+          import os
+          with open('Cargo.toml', encoding='utf-8') as file:
+              content = file.read()
+              pattern = r'version *= *"([\d\.]+)"'
+              searchObj = re.search(pattern, content)
+              with open(os.environ.get("GITHUB_OUTPUT"),'w', encoding='utf-8') as output:
+                  output.write("value=" + searchObj.group(1))
+
+      - name: Create release
+        id: create_release
+        run: |
+          set -xe
+          shopt -s nullglob
+          TAGNAME="v${{steps.version.outputs.value}}"
+          NAME="FreedomRust $TAGNAME"
+          hub release create -m "$NAME" -t "master" "$TAGNAME" \
+            -a "target/freedom-rust_x86_64_linux.gz" \
+            -a "target/freedom-rust_x86_64_win.zip"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
