@@ -19,7 +19,7 @@ lazy_static::lazy_static! {
     static ref REG_PORT :Regex  = Regex::new(r"my_port=([0-9]+)").unwrap();
     static ref REG_TOKEN :Regex  = Regex::new(r"my_token=([^;]+)").unwrap();
     static ref REG_USERNAME :Regex  = Regex::new(r"my_username=([^;]+)").unwrap();
-    static ref REG_TYPE :Regex  = Regex::new(r"my_type=([^;]*)").unwrap();
+    static ref REG_TYPE :Regex  = Regex::new(r"my_type=([0-9]+)").unwrap();
     static ref REG_TIME :Regex  = Regex::new(r"my_time=([0-9]+)").unwrap();
     static ref RESPONSE_403:&'static str = concat!(
         "HTTP/1.1 403 Forbidden\r\n" ,"Content-Length: 0\r\n" ,"Connection: closed\r\n\r\n"
@@ -112,7 +112,7 @@ fn check_valid_and_get_dst_addr<'a>(
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    if time_now - time_local > 600000 || proxy_type != "1" {
+    if (time_now > time_local + 600000) || proxy_type != "1" {
         return Err(io::Error::new(
             io::ErrorKind::Other,
             "Timestamp or type in header is not valid!!",
@@ -162,6 +162,7 @@ where
 
     let addr = check_valid_and_get_dst_addr(head_str, conf);
     if let Err(err) = addr {
+        eprintln!("{}", err);
         local_writer.write_all(RESPONSE_403.as_bytes()).await?;
         local_writer.shutdown().await?;
         return Err(err);
