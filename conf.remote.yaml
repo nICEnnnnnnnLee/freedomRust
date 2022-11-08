@@ -1,0 +1,12 @@
+bind_host: 127.0.0.1
+bind_port: 443 
+salt: "4567"
+use_ssl: false
+sni: n1ce.top
+cert_path: D:\Work\0_cert\n1ce.top\etc\pjac\certdir\fullchain.pem
+key_path: D:\Work\0_cert\n1ce.top\etc\pjac\n1ce.top.key
+# CertPath: D:\Work\1461024_nicelee.top_nginx\1461024_nicelee.top.pem
+# KeyPath: D:\Work\1461024_nicelee.top_nginx\1461024_nicelee.top.key
+users:
+  lijia: lijia 
+  username: pwd

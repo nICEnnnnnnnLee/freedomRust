@@ -1,0 +1,57 @@
+name: Build Release
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "Cargo.toml"
+
+  workflow_dispatch:
+    inputs:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Git checkout
+        uses: actions/checkout@v3
+
+      - name: Build artifacts
+        run: |
+          rustup update stable && rustup default stable
+          rustup target add aarch64-unknown-linux-gnu
+          rustup target add x86_64-pc-windows-gnu
+          cargo build --release --target=aarch64-unknown-linux-gnu
+          cargo build --release --target=x86_64-pc-windows-gnu
+          ls -l target
+          ls -l target\x86_64-pc-windows-gnu\release
+          ls -l target\aarch64-unknown-linux-gnu\release
+          zip -m -j target\x86_64-pc-windows-gnu\release\freedom-rust.exe
+          gzip target\aarch64-unknown-linux-gnu\release\freedom-rust
+
+      - name: Read version
+        id: version
+        shell: python
+        run: |
+          import re
+          import os
+          with open('Cargo.toml', encoding='utf-8') as file:
+              content = file.read()
+              pattern = r'version *= *"([\d\.]+)"'
+              searchObj = re.search(pattern, content)
+              with open(os.environ.get("GITHUB_OUTPUT"),'w', encoding='utf-8') as output:
+                  output.write("value=" + searchObj.group(1))
+
+      - name: Create release
+        id: create_release
+        run: |
+          set -xe
+          shopt -s nullglob
+          TAGNAME="v${{steps.version.outputs.value}}"
+          NAME="FreedomRust $RELDATE"
+          hub release create -m "$NAME" -t "master" "$TAGNAME" \
+            -a "target\aarch64-unknown-linux-gnu\release\freedom-rust.gz" \
+            -a "target\x86_64-pc-windows-gnu\release\freedom-rust.zip"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
