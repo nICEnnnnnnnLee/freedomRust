@@ -88,10 +88,20 @@ pub async fn handle(stream: TcpStream, conf: &config::Config) -> io::Result<()> 
     let (mut local_reader, mut local_writer) = split(stream);
     // 读取头部
     let mut head = [0u8; 2048];
-    let n = local_reader.read(&mut head[..]).await?;
+    let n = local_reader.read(&mut head[..]).await;
+    if let Err(err) = n {
+        let _ = local_writer.shutdown().await;
+        return Err(err);
+    }
+    let n = n.unwrap();
 
-    let head_str = std::str::from_utf8(&head[..n])
-        .map_err(|x| io::Error::new(io::ErrorKind::Interrupted, x))?;
+    let head_str =
+        std::str::from_utf8(&head[..n]).map_err(|x| io::Error::new(io::ErrorKind::Interrupted, x));
+    if let Err(err) = head_str {
+        let _ = local_writer.shutdown().await;
+        return Err(err);
+    }
+    let head_str = head_str.unwrap();
 
     if let Some(caps) = REG_HEAD.captures(head_str) {
         let host = &caps[2];
@@ -102,27 +112,47 @@ pub async fn handle(stream: TcpStream, conf: &config::Config) -> io::Result<()> 
         // let remote_stream = TcpStream::connect(dst_addr).await?;
         // let (mut remote_reader, mut remote_writer) = split(remote_stream);
 
-        let (mut remote_reader, mut remote_writer) = get_remote_conn(host, port, conf).await?;
+        let result = get_remote_conn(host, port, conf).await;
+        if let Err(err) = result {
+            let _ = local_writer.shutdown().await;
+            return Err(err);
+        }
+        let (mut remote_reader, mut remote_writer) = result.unwrap();
 
         if head_str.starts_with("CONNECT") {
-            local_writer
+            if let Err(err) = local_writer
                 .write_all("HTTP/1.1 200 Connection Established\r\n\r\n".as_bytes())
-                .await?;
+                .await
+            {
+                let _ = local_writer.shutdown().await;
+                return Err(err);
+            }
         } else {
-            remote_writer.write_all(&head[..n]).await?;
+            if let Err(err) = remote_writer.write_all(&head[..n]).await {
+                let _ = local_writer.shutdown().await;
+                return Err(err);
+            }
         }
 
+        // let dst = format!("{}:{}", host, port);
         let client_to_server = async {
-            copy(&mut local_reader, &mut remote_writer).await?;
-            remote_writer.shutdown().await
+            let _ = copy(&mut local_reader, &mut remote_writer).await;
+            let _ = remote_writer.shutdown().await;
+            // println!("remote {} 已关闭", dst);
+            Ok(()) as io::Result<()>
         };
 
         let server_to_client = async {
-            copy(&mut remote_reader, &mut local_writer).await?;
-            local_writer.shutdown().await
+            let _ = copy(&mut remote_reader, &mut local_writer).await;
+            let _ = local_writer.shutdown().await;
+            // println!("local {} 已关闭", dst);
+            Ok(())
         };
 
-        tokio::try_join!(client_to_server, server_to_client)?;
+        let _ = tokio::try_join!(client_to_server, server_to_client);
+        Ok(())
+    } else {
+        let _ = local_writer.shutdown().await;
+        Err(io::Error::new(io::ErrorKind::Other, "Not valid head"))
     }
-    Ok(())
 }

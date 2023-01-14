@@ -5,7 +5,7 @@ use regex::Regex;
 use rustls_pemfile::{certs, rsa_private_keys};
 use std::fs::File;
 use std::io::{self, BufReader};
-use std::net::ToSocketAddrs;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::Path;
 use std::time::SystemTime;
 use tokio::io::{copy, split, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -59,7 +59,8 @@ pub fn init(conf: &config::Config) -> io::Result<TlsAcceptor> {
 fn check_valid_and_get_dst_addr<'a>(
     head_str: &'a str,
     conf: &'a config::Config,
-) -> io::Result<(&'a str, u16)> {
+) -> io::Result<SocketAddr> {
+    println!("request comming...");
     let cookie = REG_COOKIE
         .captures(head_str)
         .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Cookie is not in header!!"))?
@@ -139,7 +140,12 @@ fn check_valid_and_get_dst_addr<'a>(
             ));
         }
     };
-    Ok((domain, port))
+    println!("to {}:{}", domain, port);
+    let addr = (domain, port)
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+    Ok(addr)
 }
 
 pub async fn handle<IO>(stream: IO, conf: &config::Config) -> io::Result<()>
@@ -150,43 +156,66 @@ where
 
     // 从头部读取信息
     let mut head = [0u8; 2048];
-    let n = local_reader.read(&mut head[..]).await?;
+
+    let n = local_reader.read(&mut head[..]).await;
+    if let Err(err) = n {
+        let _ = local_writer.shutdown().await;
+        return Err(err);
+    }
+    let n = n.unwrap();
     if n == 2048 {
         return Err(io::Error::new(
             io::ErrorKind::Other,
             "Receive a unexpected big size of header!!",
         ));
     }
-    let head_str = std::str::from_utf8(&head[..n])
-        .map_err(|x| io::Error::new(io::ErrorKind::Interrupted, x))?;
+
+    let head_str =
+        std::str::from_utf8(&head[..n]).map_err(|x| io::Error::new(io::ErrorKind::Interrupted, x));
+    if let Err(err) = head_str {
+        let _ = local_writer.shutdown().await;
+        return Err(err);
+    }
+    let head_str = head_str.unwrap();
 
     let addr = check_valid_and_get_dst_addr(head_str, conf);
     if let Err(err) = addr {
         eprintln!("{}", err);
-        local_writer.write_all(RESPONSE_403.as_bytes()).await?;
-        local_writer.shutdown().await?;
+        let _ = local_writer.write_all(RESPONSE_403.as_bytes()).await;
+        let _ = local_writer.shutdown().await;
         return Err(err);
     }
-    let addr = addr
-        .unwrap()
-        .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+    let addr = addr.unwrap();
     // 远程读取链接
-    let dst_stream = TcpStream::connect(&addr).await?;
+    let dst_stream = TcpStream::connect(&addr).await;
+    if let Err(err) = dst_stream {
+        let _ = local_writer.shutdown().await;
+        return Err(err);
+    }
+    let dst_stream = dst_stream.unwrap();
+
     let (mut dst_reader, mut dst_writer) = split(dst_stream);
 
     // 回复101.建立通道
-    local_writer.write_all(RESPONSE_101.as_bytes()).await?;
+    if let Err(err) = local_writer.write_all(RESPONSE_101.as_bytes()).await {
+        let _ = local_writer.shutdown().await;
+        return Err(err);
+    }
+
+    // let dst = format!("{}", addr);
     let client_to_dst = async {
-        copy(&mut local_reader, &mut dst_writer).await?;
-        dst_writer.shutdown().await
+        let _ = copy(&mut local_reader, &mut dst_writer).await;
+        let _ = dst_writer.shutdown().await;
+        // println!("remote {} 已关闭", dst);
+        Ok(()) as io::Result<()>
     };
     let dst_to_client = async {
-        copy(&mut dst_reader, &mut local_writer).await?;
-        local_writer.shutdown().await
+        let _ = copy(&mut dst_reader, &mut local_writer).await;
+        let _ = local_writer.shutdown().await;
+        // println!("local {} 已关闭", dst);
+        Ok(())
     };
 
-    tokio::try_join!(client_to_dst, dst_to_client)?;
+    let _ = tokio::try_join!(client_to_dst, dst_to_client);
     Ok(()) as io::Result<()>
 }
